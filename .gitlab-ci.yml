@@ -1,0 +1,230 @@
+stages:
+  - test
+  - load-test
+  - report
+  - deploy
+
+variables:
+  PYTHON_VERSION: "3.11"
+  SELENIUM_VERSION: "4.15.2"
+
+# Cache de dependências
+.cache_template: &cache_config
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - venv/
+      - .venv/
+
+# Template de setup
+.setup_template: &setup_python
+  image: python:${PYTHON_VERSION}
+  before_script:
+    - python -m venv venv
+    - source venv/bin/activate
+    - pip install --upgrade pip
+    - pip install -r projects/demo-login/requirements.txt
+  <<: *cache_config
+
+# ============================================
+# STAGE 1: Testes Funcionais (Behave + Selenium)
+# ============================================
+
+unit-tests:
+  <<: *setup_python
+  stage: test
+  script:
+    - source venv/bin/activate
+    - cd projects/demo-login
+    - behave --format=pretty --junit --junit-directory=reports/
+  artifacts:
+    when: always
+    paths:
+      - projects/demo-login/screenshots/
+      - projects/demo-login/reports/
+    reports:
+      junit: projects/demo-login/reports/*.xml
+    expire_in: 7 days
+  tags:
+    - docker
+
+integration-tests:
+  <<: *setup_python
+  stage: test
+  script:
+    - source venv/bin/activate
+    - cd projects/demo-login
+    - behave --tags=@integration --format=pretty
+  artifacts:
+    when: on_failure
+    paths:
+      - projects/demo-login/screenshots/
+    expire_in: 7 days
+  only:
+    - main
+    - develop
+  tags:
+    - docker
+
+# ============================================
+# STAGE 2: Testes de Carga (Locust)
+# ============================================
+
+load-test-smoke:
+  <<: *setup_python
+  stage: load-test
+  script:
+    - source venv/bin/activate
+    - cd projects/locust-demo
+    - mkdir -p results
+    - locust -f locustfile.py
+      --headless
+      --users=10
+      --spawn-rate=2
+      --run-time=30s
+      --host=https://the-internet.herokuapp.com
+      --csv=results/smoke_test
+      --html=results/smoke_report.html
+  artifacts:
+    paths:
+      - projects/locust-demo/results/
+    reports:
+      html: projects/locust-demo/results/smoke_report.html
+    expire_in: 30 days
+  only:
+    - main
+  tags:
+    - docker
+
+load-test-stress:
+  <<: *setup_python
+  stage: load-test
+  script:
+    - source venv/bin/activate
+    - cd projects/locust-demo
+    - mkdir -p results
+    - locust -f locustfile.py
+      --headless
+      --users=100
+      --spawn-rate=10
+      --run-time=2m
+      --host=https://the-internet.herokuapp.com
+      --csv=results/stress_test
+      --html=results/stress_report.html
+  artifacts:
+    paths:
+      - projects/locust-demo/results/
+    reports:
+      html: projects/locust-demo/results/stress_report.html
+    expire_in: 30 days
+  when: manual
+  only:
+    - main
+  allow_failure: true
+  tags:
+    - docker
+
+# ============================================
+# STAGE 3: Relatórios e Qualidade
+# ============================================
+
+quality-gate:
+  <<: *setup_python
+  stage: report
+  script:
+    - source venv/bin/activate
+    - pip install pytest-cov
+    - cd projects/demo-login
+    - pytest --cov=pages --cov=steps --cov-report=xml --cov-report=html
+    - coverage report --fail-under=80
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    paths:
+      - projects/demo-login/htmlcov/
+      - projects/demo-login/coverage.xml
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: projects/demo-login/coverage.xml
+    expire_in: 30 days
+  only:
+    - main
+    - merge_requests
+  tags:
+    - docker
+
+# ============================================
+# STAGE 4: Deploy
+# ============================================
+
+deploy-staging:
+  <<: *setup_python
+  stage: deploy
+  script:
+    - echo "Deploying to staging..."
+    - scp -r pages/ user@staging-server:/app/tests/
+    - ssh user@staging-server "cd /app && ./run_tests.sh"
+  environment:
+    name: staging
+    url: https://staging.example.com
+  only:
+    - main
+  when: on_success
+  tags:
+    - docker
+    - ssh
+
+deploy-production:
+  <<: *setup_python
+  stage: deploy
+  script:
+    - echo "Deploying to production..."
+    - echo "Production deployment requires manual approval"
+  environment:
+    name: production
+    url: https://production.example.com
+  only:
+    - main
+  when: manual
+  tags:
+    - docker
+
+# ============================================
+# Parallel Execution
+# ============================================
+
+test-parallel:
+  <<: *setup_python
+  stage: test
+  parallel: 4
+  script:
+    - source venv/bin/activate
+    - cd projects/demo-login
+    - behave --format=parallel --processes=4
+  artifacts:
+    when: always
+    paths:
+      - projects/demo-login/screenshots/
+      - projects/demo-login/reports/
+    expire_in: 7 days
+  only:
+    - main
+  tags:
+    - docker
+
+# ============================================
+# Schedules (Testes Noturnos/Periódicos)
+# ============================================
+
+nightly-tests:
+  <<: *setup_python
+  stage: test
+  script:
+    - source venv/bin/activate
+    - cd projects/demo-login
+    - behave --tags=@nightly --format=pretty
+  only:
+    - main
+  when: on_success
+  tags:
+    - docker

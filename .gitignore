@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+
+# Test artifacts
+screenshots/
+reports/
+*.log
+results/
+htmlcov/
+.coverage
+coverage.xml
+*.coverage
+
+# Behave
+.behave.log/
+pretty.output
+
+# Locust
+locust-files/
+*.dist
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
